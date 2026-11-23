@@ -19,7 +19,7 @@ import (
 
 // version 由 CI 通过 -ldflags "-X main.version=..." 注入；
 // 必须是 var 而非 const，否则链接器无法覆盖。
-var version = "1.3.0"
+var version = "1.3.1"
 
 func main() {
 	cp := setupConsoleUTF8()

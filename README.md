@@ -1,4 +1,4 @@
-# xunzip — 解压缩命令行工具（v1.3.0）
+# xunzip — 解压缩命令行工具（v1.3.1）
 
 [![CI](https://github.com/fansa92/xunzip/actions/workflows/ci.yml/badge.svg)](https://github.com/fansa92/xunzip/actions/workflows/ci.yml)
 [![Release](https://github.com/fansa92/xunzip/actions/workflows/release.yml/badge.svg)](https://github.com/fansa92/xunzip/actions/workflows/release.yml)
@@ -162,8 +162,8 @@ xunzip/
 推 `v*` 标签即自动交叉编译 12 个目标并创建 GitHub Release：
 
 ```bash
-git tag v1.3.0
-git push origin v1.3.0
+git tag v1.3.1
+git push origin v1.3.1
 ```
 
 版本号通过 `-ldflags "-X main.version=..."` 注入（`main.version` 因此是 `var` 而非 `const`），
