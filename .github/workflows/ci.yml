@@ -1,0 +1,142 @@
+name: CI
+
+# 每次推送与 PR 都跑：格式、静态检查、当前平台功能测试，
+# 再对全部发布目标做一次交叉编译冒烟，确保 tag 触发的 Release 不会在构建阶段翻车。
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: 格式 / vet / 功能测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt 检查
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化，请运行 gofmt -w："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: 构建
+        run: go build -trimpath -o /tmp/xunzip .
+
+      - name: 冒烟测试（压缩解压往返）
+        run: |
+          set -euo pipefail
+          X=/tmp/xunzip
+          work="$(mktemp -d)"
+          cd "$work"
+
+          mkdir -p src/sub src/empty
+          printf 'alpha\n' > src/a.txt
+          printf 'beta\n'  > src/sub/b.txt
+          : > src/zero.txt
+          printf '中文\n' > src/中文名.txt
+          head -c 200000 /dev/urandom > src/sub/rand.bin
+
+          # 每个可写容器格式都要能打包、测试、原样解回来
+          for f in zip 7z tar tar.gz tar.bz2 tar.xz tar.zst; do
+            rm -f "arc.$f"
+            "$X" a "arc.$f" src >/dev/null
+            "$X" t "arc.$f" >/dev/null
+            rm -rf "out.$f"
+            "$X" x -o "out.$f" "arc.$f" >/dev/null
+            diff -r src "out.$f/src" >/dev/null
+            echo "往返一致: $f"
+          done
+
+          # 单文件流格式
+          for f in gz bz2 xz zst lz4 br lz lzma; do
+            rm -f "one.$f"
+            "$X" a "one.$f" src/a.txt >/dev/null
+            "$X" t "one.$f" >/dev/null
+            echo "单文件流可用: $f"
+          done
+
+          # 包内增删改
+          "$X" a mod.zip src >/dev/null
+          "$X" d mod.zip src/a.txt >/dev/null
+          "$X" rn mod.zip src/sub/b.txt src/sub/c.txt >/dev/null
+          "$X" l -slt mod.zip >/dev/null
+          "$X" l --json mod.zip >/dev/null
+
+          # 加密 zip、分卷、管道、哈希
+          "$X" a -p pw enc.zip src/a.txt >/dev/null
+          rm -rf enc.out
+          "$X" x -o enc.out -p pw enc.zip >/dev/null
+          diff src/a.txt enc.out/src/a.txt >/dev/null
+
+          "$X" a -v 64k vol.7z src >/dev/null
+          test -f vol.7z.001
+          rm -rf vol.out
+          "$X" x -o vol.out vol.7z.001 >/dev/null
+          diff -r src vol.out/src >/dev/null
+
+          cat src/a.txt | "$X" a -si pipe.gz >/dev/null
+          "$X" x -so pipe.gz > piped.txt
+          diff src/a.txt piped.txt >/dev/null
+
+          "$X" h -scrc SHA256 src/a.txt >/dev/null
+          "$X" i >/dev/null
+          "$X" -version
+
+          echo "全部冒烟用例通过"
+
+  cross:
+    name: 交叉编译 ${{ matrix.goos }}/${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64, arch: amd64 }
+          - { goos: linux, goarch: arm64, arch: arm64 }
+          - { goos: linux, goarch: "386", arch: "386" }
+          - { goos: linux, goarch: arm, goarm: "7", arch: armv7 }
+          - { goos: linux, goarch: arm, goarm: "6", arch: armv6 }
+          - { goos: windows, goarch: amd64, arch: amd64 }
+          - { goos: windows, goarch: "386", arch: "386" }
+          - { goos: windows, goarch: arm64, arch: arm64 }
+          - { goos: darwin, goarch: amd64, arch: amd64 }
+          - { goos: darwin, goarch: arm64, arch: arm64 }
+          - { goos: freebsd, goarch: amd64, arch: amd64 }
+          - { goos: freebsd, goarch: arm64, arch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 编译
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          EXT=""
+          [ "$GOOS" = "windows" ] && EXT=".exe"
+          go build -trimpath -ldflags="-s -w" -o "/tmp/xunzip${EXT}" .
+          ls -la "/tmp/xunzip${EXT}"

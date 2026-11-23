@@ -1,0 +1,16 @@
+# 构建产物
+/xunzip
+/xunzip.exe
+*.exe
+/dist/
+
+# 测试与临时文件
+*.tmp
+*.log
+/tmp/
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

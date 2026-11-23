@@ -1,0 +1,13 @@
+# 统一用 LF，避免 Windows 上的 CRLF 污染与 CI 格式检查差异
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.exe binary
+*.zip binary
+*.gz binary
+*.bz2 binary
+*.xz binary
+*.zst binary
+*.7z binary
+*.png binary
+*.jpg binary
