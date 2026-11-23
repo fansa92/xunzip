@@ -110,6 +110,32 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: xunzip ${{ github.ref_name }}
           generate_release_notes: true
+          append_body: true
+          body: |
+            ## 安装
+
+            下载对应平台的压缩包，解出单个可执行文件即可使用，无运行时依赖。
+
+            | 平台 | 架构 | 文件后缀 |
+            | --- | --- | --- |
+            | Linux | amd64 / arm64 / 386 / armv7 / armv6 | `.tar.gz` |
+            | Windows | amd64 / arm64 / 386 | `.zip` |
+            | macOS | amd64 / arm64（Apple Silicon） | `.tar.gz` |
+            | FreeBSD | amd64 / arm64 | `.tar.gz` |
+
+            ## 校验
+
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
+
+            ## 这个版本
+
+            - 新增 **7z 写入**（Store / LZMA2），补齐 7-Zip 的 7z 创建能力
+            - 支持 7-Zip 紧贴写法 `-oDIR` / `-pPASS` / `-mx9`
+            - 14 种格式读写、分卷、管道、包内增删改、`-slt`/`--json`、哈希命令
+
+            完整说明见 [README](https://github.com/fansa92/xunzip#readme)。
           files: |
             dist/*.tar.gz
             dist/*.zip
