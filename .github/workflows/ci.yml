@@ -2,6 +2,7 @@ name: CI
 
 # 每次推送与 PR 都跑：格式、静态检查、当前平台功能测试，
 # 再对全部发布目标做一次交叉编译冒烟，确保 tag 触发的 Release 不会在构建阶段翻车。
+# 目标清单见 .github/targets.txt（CI 与 Release 共用）。
 on:
   push:
     branches: [main, master]
@@ -102,24 +103,13 @@ jobs:
           echo "全部冒烟用例通过"
 
   cross:
-    name: 交叉编译 ${{ matrix.goos }}/${{ matrix.arch }}
+    name: 交叉编译 ${{ matrix.family }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { goos: linux, goarch: amd64, arch: amd64 }
-          - { goos: linux, goarch: arm64, arch: arm64 }
-          - { goos: linux, goarch: "386", arch: "386" }
-          - { goos: linux, goarch: arm, goarm: "7", arch: armv7 }
-          - { goos: linux, goarch: arm, goarm: "6", arch: armv6 }
-          - { goos: windows, goarch: amd64, arch: amd64 }
-          - { goos: windows, goarch: "386", arch: "386" }
-          - { goos: windows, goarch: arm64, arch: arm64 }
-          - { goos: darwin, goarch: amd64, arch: amd64 }
-          - { goos: darwin, goarch: arm64, arch: arm64 }
-          - { goos: freebsd, goarch: amd64, arch: amd64 }
-          - { goos: freebsd, goarch: arm64, arch: arm64 }
+        # 与 Release 相同的平台族分组，每组内串行构建本组目标，组间并行。
+        family: [linux, bsd, win-mac]
     steps:
       - uses: actions/checkout@v7
 
@@ -128,15 +118,43 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: 编译
+      - name: 遍历目标清单交叉编译
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
-          CGO_ENABLED: "0"
+          FAMILY: ${{ matrix.family }}
         run: |
           set -euo pipefail
-          EXT=""
-          [ "$GOOS" = "windows" ] && EXT=".exe"
-          go build -trimpath -ldflags="-s -w" -o "/tmp/xunzip${EXT}" .
-          ls -la "/tmp/xunzip${EXT}"
+          case "$FAMILY" in
+            linux)   pattern='^(linux)$' ;;
+            bsd)     pattern='^(freebsd|netbsd|openbsd)$' ;;
+            win-mac) pattern='^(windows|darwin)$' ;;
+            *)       echo "未知分组: $FAMILY"; exit 1 ;;
+          esac
+
+          # 先用同一份清单数出本组应有的目标数，编译后再比对，防止清单写歪导致静默漏编
+          expected=0
+          while IFS='|' read -r goos _; do
+            case "$goos" in ''|'#'*) continue ;; esac
+            if [[ "$goos" =~ $pattern ]]; then expected=$((expected + 1)); fi
+          done < .github/targets.txt
+
+          count=0
+          while IFS='|' read -r goos goarch variant name; do
+            case "$goos" in ''|'#'*) continue ;; esac
+            [[ "$goos" =~ $pattern ]] || continue
+            unset GOARM GOMIPS 2>/dev/null || true
+            case "$goarch" in
+              arm)         export GOARM="$variant" ;;   # 5/6/7
+              mips|mipsle) export GOMIPS="$variant" ;;  # softfloat
+            esac
+            EXT=""
+            [ "$goos" = windows ] && EXT=".exe"
+            out="/tmp/xunzip_${goos}_${name}${EXT}"
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags="-s -w" -o "$out" .
+            printf '  %-8s %-9s %6s KB\n' "$goos" "$name" "$(( $(stat -c%s "$out") / 1024 ))"
+            count=$((count + 1))
+          done < .github/targets.txt
+
+          echo "分组 ${FAMILY} 完成：$count 个目标（清单预期 $expected）"
+          test "$count" -gt 0
+          test "$count" -eq "$expected"

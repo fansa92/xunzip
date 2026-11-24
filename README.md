@@ -13,10 +13,15 @@
 
 | 平台 | 架构 |
 | --- | --- |
-| Linux | `amd64`、`arm64`、`386`、`armv7`、`armv6` |
+| Linux | `amd64`、`arm64`、`386`、`armv7`、`armv6`、`armv5`、`riscv64`、`loong64`、`ppc64le`、`s390x`、`mips`、`mipsle`、`mips64le` |
 | Windows | `amd64`、`arm64`、`386` |
 | macOS | `amd64`、`arm64`（Apple Silicon） |
-| FreeBSD | `amd64`、`arm64` |
+| FreeBSD | `amd64`、`arm64`、`386`、`armv7` |
+| NetBSD | `amd64`、`arm64` |
+| OpenBSD | `amd64`、`arm64` |
+
+共 26 个目标。其中 `mips` / `mipsle` 走软浮点（`GOMIPS=softfloat`），适配 OpenWrt 等无 FPU 路由器；
+`armv5` 适配无 FPU 的老 ARM 设备；`loong64` 为龙芯 LoongArch，`mips64le` 为龙芯 3A4000 及更早机型。
 
 压缩包同时附 `SHA256SUMS.txt`，可校验：
 
@@ -154,17 +159,21 @@ xunzip/
   motw.go               Mark-of-the-Web
   console_windows.go    控制台 UTF-8 切换
   .github/workflows/    CI（格式/vet/冒烟/交叉编译）与 Release（多架构打包发布）
+  .github/targets.txt   发布目标清单（CI 与 Release 共用）
   README.md             本文件
 ```
 
 ## 发布流程
 
-推 `v*` 标签即自动交叉编译 12 个目标并创建 GitHub Release：
+推 `v*` 标签即自动交叉编译 26 个目标并创建 GitHub Release：
 
 ```bash
 git tag v1.3.1
 git push origin v1.3.1
 ```
+
+目标清单集中在 `.github/targets.txt`，一行一个 `GOOS|GOARCH|变体|包名`；
+Release 按平台族（linux / bsd / win-mac）分三个 runner 并行构建，CI 则单 job 串行编完全部目标。
 
 版本号通过 `-ldflags "-X main.version=..."` 注入（`main.version` 因此是 `var` 而非 `const`），
 Release 任务会在 `linux/amd64` 产物上实际执行 `-version` 自检，注入失败即中断发布。

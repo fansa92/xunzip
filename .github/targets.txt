@@ -1,0 +1,37 @@
+# xunzip 发布目标清单（CI 与 Release 共用，唯一来源）
+#
+# 格式：GOOS|GOARCH|变体|包名架构部分
+#   变体用于 arm 架构（GOARM=5/6/7）与 mips 架构（GOMIPS=softfloat/hardfloat），
+#   其他架构留空。以 # 开头的行和空行会被忽略。
+#
+# 说明：
+#   - armv5：老 NAS / 老路由器，无 FPU 的 ARM9/ARM11
+#   - mips/mipsle softfloat：OpenWrt 等无 FPU 路由器；32 位 MIPS 一律走软浮点
+#   - mips64le：龙芯 3A4000 及更早的 MIPS64EL 存量设备
+#   - loong64：龙芯 3A5000/3A6000（LoongArch）
+linux|amd64||amd64
+linux|arm64||arm64
+linux|386||386
+linux|arm|7|armv7
+linux|arm|6|armv6
+linux|arm|5|armv5
+linux|riscv64||riscv64
+linux|loong64||loong64
+linux|ppc64le||ppc64le
+linux|s390x||s390x
+linux|mips|softfloat|mips
+linux|mipsle|softfloat|mipsle
+linux|mips64le||mips64le
+windows|amd64||amd64
+windows|386||386
+windows|arm64||arm64
+darwin|amd64||amd64
+darwin|arm64||arm64
+freebsd|amd64||amd64
+freebsd|arm64||arm64
+freebsd|386||386
+freebsd|arm|7|armv7
+netbsd|amd64||amd64
+netbsd|arm64||arm64
+openbsd|amd64||amd64
+openbsd|arm64||arm64

@@ -1,7 +1,8 @@
 name: Release
 
 # 推送 v* 标签即触发多架构交叉编译与 GitHub Release 发布。
-# 例：git tag v1.3.0 && git push origin v1.3.0
+# 例：git tag v1.3.1 && git push origin v1.3.1
+# 目标清单见 .github/targets.txt（CI 与 Release 共用）。
 on:
   push:
     tags:
@@ -12,24 +13,14 @@ permissions:
 
 jobs:
   build:
-    name: 构建 ${{ matrix.goos }}/${{ matrix.arch }}
+    name: 构建 ${{ matrix.family }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { goos: linux, goarch: amd64, arch: amd64 }
-          - { goos: linux, goarch: arm64, arch: arm64 }
-          - { goos: linux, goarch: "386", arch: "386" }
-          - { goos: linux, goarch: arm, goarm: "7", arch: armv7 }
-          - { goos: linux, goarch: arm, goarm: "6", arch: armv6 }
-          - { goos: windows, goarch: amd64, arch: amd64 }
-          - { goos: windows, goarch: "386", arch: "386" }
-          - { goos: windows, goarch: arm64, arch: arm64 }
-          - { goos: darwin, goarch: amd64, arch: amd64 }
-          - { goos: darwin, goarch: arm64, arch: arm64 }
-          - { goos: freebsd, goarch: amd64, arch: amd64 }
-          - { goos: freebsd, goarch: arm64, arch: arm64 }
+        # 按平台族分组：每组一个 runner 串行构建本组的多个目标，
+        # 组之间并行。26 个目标拆成 3 组，避免出现 26 个 job。
+        family: [linux, bsd, win-mac]
     steps:
       - uses: actions/checkout@v7
 
@@ -39,52 +30,74 @@ jobs:
           cache: true
 
       - name: 交叉编译并打包
-        id: pack
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
+          FAMILY: ${{ matrix.family }}
           CGO_ENABLED: "0"
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          # 版本号去掉前缀 v：-version 输出 "xunzip 1.3.0" 而不是 "xunzip v1.3.0"
+          # 版本号去掉前缀 v：-version 输出 "xunzip 1.3.1" 而不是 "xunzip v1.3.1"
           VERSION="${TAG#v}"
-          NAME="xunzip_${VERSION}_${GOOS}_${{ matrix.arch }}"
-          STAGE="staging/${NAME}"
-          EXT=""
-          [ "$GOOS" = "windows" ] && EXT=".exe"
 
-          mkdir -p "$STAGE"
-          go build -trimpath \
-            -ldflags="-s -w -X main.version=${VERSION}" \
-            -o "${STAGE}/xunzip${EXT}" .
-          cp README.md "$STAGE/"
+          case "$FAMILY" in
+            linux)   pattern='^(linux)$' ;;
+            bsd)     pattern='^(freebsd|netbsd|openbsd)$' ;;
+            win-mac) pattern='^(windows|darwin)$' ;;
+            *)       echo "未知分组: $FAMILY"; exit 1 ;;
+          esac
 
-          # 只在 runner 能直接执行的组合上做版本自检（linux/amd64），
-          # 避免出现"发版了但二进制里还是旧版本"这种哑巴故障。
-          if [ "$GOOS" = "linux" ] && [ "$GOARCH" = "amd64" ]; then
-            GOT="$("${STAGE}/xunzip" -version)"
-            echo "版本自检: $GOT"
-            case "$GOT" in
-              *"${VERSION}"*) ;;
-              *) echo "版本注入失败：期望包含 ${VERSION}，实际为 $GOT"; exit 1 ;;
+          mkdir -p dist staging
+          count=0
+          while IFS='|' read -r goos goarch variant name; do
+            case "$goos" in ''|'#'*) continue ;; esac
+            [[ "$goos" =~ $pattern ]] || continue
+
+            unset GOARM GOMIPS 2>/dev/null || true
+            case "$goarch" in
+              arm)         export GOARM="$variant" ;;   # 5/6/7
+              mips|mipsle) export GOMIPS="$variant" ;;  # softfloat
             esac
-          fi
 
-          mkdir -p dist
-          if [ "$GOOS" = "windows" ]; then
-            (cd staging && zip -qr "../dist/${NAME}.zip" "$NAME")
-            echo "asset=dist/${NAME}.zip" >> "$GITHUB_OUTPUT"
-          else
-            tar -czf "dist/${NAME}.tar.gz" -C staging "$NAME"
-            echo "asset=dist/${NAME}.tar.gz" >> "$GITHUB_OUTPUT"
-          fi
+            NAME="xunzip_${VERSION}_${goos}_${name}"
+            STAGE="staging/${NAME}"
+            EXT=""
+            [ "$goos" = "windows" ] && EXT=".exe"
+
+            mkdir -p "$STAGE"
+            GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath \
+                -ldflags="-s -w -X main.version=${VERSION}" \
+                -o "${STAGE}/xunzip${EXT}" .
+            cp README.md "$STAGE/"
+
+            # 只在 runner 能直接执行的组合上做版本自检（linux/amd64），
+            # 避免出现"发版了但二进制里还是旧版本"这种哑巴故障。
+            if [ "$goos" = "linux" ] && [ "$goarch" = "amd64" ]; then
+              GOT="$("${STAGE}/xunzip" -version)"
+              echo "版本自检: $GOT"
+              case "$GOT" in
+                *"${VERSION}"*) ;;
+                *) echo "版本注入失败：期望包含 ${VERSION}，实际为 $GOT"; exit 1 ;;
+              esac
+            fi
+
+            if [ "$goos" = "windows" ]; then
+              (cd staging && zip -qr "../dist/${NAME}.zip" "$NAME")
+            else
+              tar -czf "dist/${NAME}.tar.gz" -C staging "$NAME"
+            fi
+            printf '  %-8s %-9s 已打包 %s\n' "$goos" "$name" "$NAME"
+            count=$((count + 1))
+          done < .github/targets.txt
+
+          echo "分组 ${FAMILY} 完成：$count 个目标"
+          test "$count" -gt 0
+          ls -lh dist
 
       - uses: actions/upload-artifact@v7
         with:
-          name: xunzip-${{ matrix.goos }}-${{ matrix.arch }}
-          path: ${{ steps.pack.outputs.asset }}
+          name: xunzip-${{ matrix.family }}
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -101,9 +114,11 @@ jobs:
 
       - name: 生成 SHA256 校验文件
         run: |
+          set -euo pipefail
           cd dist
           sha256sum *.tar.gz *.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
+          echo "共 $(ls -1 *.tar.gz *.zip | wc -l) 个平台包"
 
       - uses: softprops/action-gh-release@v3
         with:
@@ -118,10 +133,15 @@ jobs:
 
             | 平台 | 架构 | 文件后缀 |
             | --- | --- | --- |
-            | Linux | amd64 / arm64 / 386 / armv7 / armv6 | `.tar.gz` |
+            | Linux | amd64 / arm64 / 386 / armv7 / armv6 / armv5 / riscv64 / loong64 / ppc64le / s390x / mips / mipsle / mips64le | `.tar.gz` |
             | Windows | amd64 / arm64 / 386 | `.zip` |
             | macOS | amd64 / arm64（Apple Silicon） | `.tar.gz` |
-            | FreeBSD | amd64 / arm64 | `.tar.gz` |
+            | FreeBSD | amd64 / arm64 / 386 / armv7 | `.tar.gz` |
+            | NetBSD | amd64 / arm64 | `.tar.gz` |
+            | OpenBSD | amd64 / arm64 | `.tar.gz` |
+
+            `mips` / `mipsle` 为软浮点（`GOMIPS=softfloat`），适配 OpenWrt 等无 FPU 路由器；
+            `armv5` 适配无 FPU 的老 ARM 设备；`loong64` 为龙芯 LoongArch。
 
             ## 校验
 
@@ -131,6 +151,9 @@ jobs:
 
             ## 这个版本
 
+            - 发布目标从 12 个扩到 26 个：新增 riscv64、loong64、ppc64le、s390x、
+              mips/mipsle/mips64le、armv5，以及 FreeBSD 386/armv7、NetBSD、OpenBSD
+            - 目标清单统一到 `.github/targets.txt`，CI 与 Release 共用同一份数据
             - 新增 **7z 写入**（Store / LZMA2），补齐 7-Zip 的 7z 创建能力
             - 支持 7-Zip 紧贴写法 `-oDIR` / `-pPASS` / `-mx9`
             - 14 种格式读写、分卷、管道、包内增删改、`-slt`/`--json`、哈希命令
